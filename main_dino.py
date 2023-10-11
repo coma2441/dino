@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import argparse
 import os
 import sys
@@ -33,6 +34,10 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
+from lora import LoRA_ViT_timm
+
+print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3} GB")
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -126,6 +131,8 @@ def get_args_parser():
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+    parser.add_argument('--pretrained_weights', default=None, type=str, help='Path to pretrained weights to evaluate.')
+    parser.add_argument('--lora_rank', default=None, type=int, help='Rank of LoRA.')
     return parser
 
 
@@ -178,7 +185,16 @@ def train_dino(args):
         embed_dim = student.fc.weight.shape[1]
     else:
         print(f"Unknow architecture: {args.arch}")
+    
+    # load pretrained weights if specified
+    if args.pretrained_weights != '':
+        utils.load_pretrained_weights(student, args.pretrained_weights, None, args.arch, args.patch_size)
 
+    # wrap ViT in a LoRA module if specified
+    if args.lora_rank is not None:
+        student = LoRA_ViT_timm(student, r=args.lora_rank)
+        teacher = LoRA_ViT_timm(teacher, r=args.lora_rank)
+    
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, DINOHead(
         embed_dim,
@@ -190,6 +206,12 @@ def train_dino(args):
         teacher,
         DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
     )
+    
+    if args.lora_rank is not None:
+        # also remember to freeze weights in student head
+        for p in student.head.parameters():
+            p.requires_grad = False
+    
     # move networks to gpu
     student, teacher = student.cuda(), teacher.cuda()
     # synchronize batch norms (if any)
@@ -222,7 +244,9 @@ def train_dino(args):
     ).cuda()
 
     # ============ preparing optimizer ... ============
+    
     params_groups = utils.get_params_groups(student)
+    
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)  # to use with ViTs
     elif args.optimizer == "sgd":
@@ -266,6 +290,11 @@ def train_dino(args):
 
     start_time = time.time()
     print("Starting DINO training !")
+    
+    # print number of trainable parameters
+    num_params = sum(p.numel() for p in student.parameters() if p.requires_grad)
+    print(f"Number of trainable parameters: {num_params}")
+    
     for epoch in range(start_epoch, args.epochs):
         data_loader.sampler.set_epoch(epoch)
 
@@ -342,11 +371,11 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                                               args.freeze_last_layer)
             fp16_scaler.step(optimizer)
             fp16_scaler.update()
-
-        # EMA update for the teacher
+        
         with torch.no_grad():
             m = momentum_schedule[it]  # momentum parameter
             for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
+                #if param_q.requires_grad: # this is a custom modification made to the original code
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
@@ -354,6 +383,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         metric_logger.update(loss=loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
+        
+        
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
