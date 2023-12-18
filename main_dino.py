@@ -187,7 +187,7 @@ def train_dino(args):
         print(f"Unknow architecture: {args.arch}")
     
     # load pretrained weights if specified
-    if args.pretrained_weights != '':
+    if args.pretrained_weights is not None:
         utils.load_pretrained_weights(student, args.pretrained_weights, None, args.arch, args.patch_size)
 
     # wrap ViT in a LoRA module if specified
