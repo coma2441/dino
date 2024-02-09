@@ -133,6 +133,7 @@ def get_args_parser():
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
     parser.add_argument('--pretrained_weights', default=None, type=str, help='Path to pretrained weights to evaluate.')
     parser.add_argument('--lora_rank', default=None, type=int, help='Rank of LoRA.')
+    parser.add_argument('--img_size', default=224, type=int, help='Size of input images.')
     return parser
 
 
@@ -169,8 +170,12 @@ def train_dino(args):
         student = vits.__dict__[args.arch](
             patch_size=args.patch_size,
             drop_path_rate=args.drop_path_rate,  # stochastic depth
+            img_size=[args.img_size],
         )
-        teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
+        teacher = vits.__dict__[args.arch](
+            patch_size=args.patch_size,
+            img_size=[args.img_size],
+        )
         embed_dim = student.embed_dim
     # if the network is a XCiT
     elif args.arch in torch.hub.list("facebookresearch/xcit:main"):
