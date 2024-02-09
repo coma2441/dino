@@ -504,4 +504,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
     args = parser.parse_args()
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    # save the arguments as a text file
+    with open(Path(args.output_dir) / 'args.txt', 'w') as f:
+        f.write('\n'.join(sys.argv))
+    
     train_dino(args)
