@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+jobfile.yml
+trained_models/
+wandb/
+labelled crops/
+labelled crops 10/
+labelled crops 20/
+.vscode/
