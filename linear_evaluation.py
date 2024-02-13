@@ -41,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('--lora_rank', default=None, type=int, help='Rank of LoRA projection matrix')
     parser.add_argument('--seed', default=1234, type=int, help='Random seed')
     parser.add_argument('--destination', default='', type=str, help='Destination folder to save results')
+    parser.add_argument('--img_size', default=224, type=int)
     args = parser.parse_args()
 
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
@@ -68,7 +69,7 @@ if __name__ == '__main__':
     print(f"Data loaded with {len(dataset_train)} train and {len(dataset_val)} val imgs.")
 
     # ============ building network ... ============
-    model = vits.__dict__[args.arch](patch_size=args.patch_size, num_classes=0)
+    model = vits.__dict__[args.arch](patch_size=args.patch_size, num_classes=0, img_size=[args.img_size])
     print(f"Model {args.arch} {args.patch_size}x{args.patch_size} built.")
     
     if args.lora_rank is not None:
