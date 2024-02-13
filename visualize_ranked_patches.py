@@ -20,6 +20,8 @@ from datetime import datetime
 
 import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as F
+
 import torch.nn as nn
 import torchvision
 from torchvision import transforms as pth_transforms
@@ -50,8 +52,15 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='./ranked_patches/', help='Path where to save visualizations.')
     args = parser.parse_args()
 
-    
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
+
     # =================================================================================
     # === BUILD MODEL =================================================================
     # =================================================================================
@@ -119,17 +128,52 @@ if __name__ == '__main__':
     embeddings = get_embeddings(model, img_tf) # shape (batch_size, num_patches, projection_dim)
     cls_token = embeddings[0, 0, :]  # CLS token embedding
     patch_tokens = embeddings[0, 1:, :]  # patch tokens, shape (num_patches, projection_dim)
-    # affinitiy matrix
-    A = torch.matmul(patch_tokens, patch_tokens.transpose(0, 1)) # shape (num_patches, num_patches)
+    # affinitiy matrix (undirected)
+
+    # How we could make the affinity matrix directed?
+    # Cosine similarity ranging -1 to 1
+    # 1 if identical, 0 if orthogonal, -1 if opposed
+    # define positive cos score: directed i->j
+    # define negative cos score: directed j->i
+
+    norm_patch_tokens = F.normalize(patch_tokens, p=2, dim=1)
+    cos_sim_matrix = torch.mm(norm_patch_tokens, norm_patch_tokens.t())
+    asymmetric_matrix = torch.zeros_like(cos_sim_matrix)
+
+
+    asymmetric_matrix.triu_(diagonal=1).copy_(cos_sim_matrix.triu(diagonal=1))
+    asymmetric_matrix.tril_(diagonal=-1).copy_(cos_sim_matrix.tril(diagonal=-1).abs())
+
+    A = asymmetric_matrix
+
+    # A = torch.matmul(patch_tokens, patch_tokens.transpose(0, 1)) # shape (num_patches, num_patches)
     # normalize
     A = A * (A > 0)
     A = A / torch.sum(A, dim=(0))
-    A = A.T
-    
+    # A = A.T
+
+    E = torch.ones_like(A)/A.shape[0]
+    E = E.to(device)
+    G = 0.85 * A + 0.15 * E
+    G = G.T
+
     for i in range(10):
-        A = np.matmul(A, A)
-    
-    heatmap = A[0].reshape(28, 28)
+        # A = np.matmul(A, A)
+        # A = torch.matmul(A, A)
+        G = torch.matmul(G, G)
+
+    rank_init = torch.ones(A.shape[0])/A.shape[0]
+    rank_init = rank_init.to(device)
+
+    # heatmap = A[0].reshape(28, 28)
+    rank_saturated = torch.matmul(rank_init, G)
+    heatmap = rank_saturated.reshape(28, 28)
+
+    plt.close()
+    plt.imshow(heatmap.cpu().numpy())
+    plt.show()
+    print(heatmap.min(), heatmap.max())
+
     heatmap = Image.fromarray(np.array(heatmap)).resize((224, 224))
     heatmap = np.array(heatmap)
     heatmap -= np.min(heatmap)
