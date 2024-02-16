@@ -50,7 +50,7 @@ if __name__ == '__main__':
     parser.add_argument("--image_path", default=None, type=str, help="Path of the image to load.")
     parser.add_argument("--image_size", default=(224, 224), type=int, nargs="+", help="Resize image.")
     parser.add_argument('--output_dir', default='./ranked_patches/', help='Path where to save visualizations.')
-    args = parser.parse_args()
+    args = parser.parse_args([])
 
     # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     if torch.cuda.is_available():
@@ -135,32 +135,62 @@ if __name__ == '__main__':
     # 1 if identical, 0 if orthogonal, -1 if opposed
     # define positive cos score: directed i->j
     # define negative cos score: directed j->i
-
     norm_patch_tokens = F.normalize(patch_tokens, p=2, dim=1)
     cos_sim_matrix = torch.mm(norm_patch_tokens, norm_patch_tokens.t())
+    upper_rows, upper_cols = torch.triu_indices(cos_sim_matrix.shape[0], cos_sim_matrix.shape[1], offset=1)
+    lower_rows, lower_cols = upper_cols, upper_rows
+
+    # split the cos_sim_matrix based on the edge scalar
+    # No self-link setup (e.g., diag = = 0)
     asymmetric_matrix = torch.zeros_like(cos_sim_matrix)
+    asymmetric_matrix = asymmetric_matrix.cpu()
+    cos_sim_matrix = cos_sim_matrix.cpu()
+
+    asymmetric_matrix[upper_rows, upper_cols] = torch.where(cos_sim_matrix[upper_rows, upper_cols] > 0, cos_sim_matrix[upper_rows, upper_cols], 0)
+    asymmetric_matrix[lower_rows, lower_cols] = torch.where(cos_sim_matrix[lower_rows, lower_cols] < 0, abs(cos_sim_matrix[lower_rows, lower_cols]), 0)
+    asymmetric_matrix = asymmetric_matrix.t()
+
+    G = asymmetric_matrix.to(device)
 
 
-    asymmetric_matrix.triu_(diagonal=1).copy_(cos_sim_matrix.triu(diagonal=1))
-    asymmetric_matrix.tril_(diagonal=-1).copy_(cos_sim_matrix.tril(diagonal=-1).abs())
+    E = torch.ones_like(G)/G.shape[0]
+    E = E.to(device)
+    ratio = 1
 
-    A = asymmetric_matrix
+
+    for i in range(5):
+        # A = np.matmul(A, A)
+        # A = torch.matmul(A, A)
+        G = ratio * G + (1-ratio) * E
+        G = G / torch.sum(G, dim=(0))
+        G = G.T
+        G = torch.matmul(G, G)
+        G = G.T
+        plt.close()
+        plt.figure(i)
+        plt.imshow(G.cpu().numpy())
+        plt.title('%d, %f, %f' % (i, G.min(), G.max()))
+        plt.show()
+
+'''
+
+'''''
 
     # A = torch.matmul(patch_tokens, patch_tokens.transpose(0, 1)) # shape (num_patches, num_patches)
     # normalize
-    A = A * (A > 0)
-    A = A / torch.sum(A, dim=(0))
+    # A = A * (A > 0)
+    # A = A / torch.sum(A, dim=(0))
     # A = A.T
 
-    E = torch.ones_like(A)/A.shape[0]
-    E = E.to(device)
-    G = 0.85 * A + 0.15 * E
-    G = G.T
-
-    for i in range(10):
+    for i in range(5):
         # A = np.matmul(A, A)
         # A = torch.matmul(A, A)
-        G = torch.matmul(G, G)
+        plt.close()
+        plt.figure(i)
+        plt.imshow(G.cpu().numpy())
+        plt.title('%d, %f, %f' % (i, G.min(), G.max()))
+        plt.show()
+
 
     rank_init = torch.ones(A.shape[0])/A.shape[0]
     rank_init = rank_init.to(device)
